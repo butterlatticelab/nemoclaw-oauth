@@ -34,8 +34,15 @@ fi
 git -C "$upstream_repo" worktree add --detach "$tmpdir" "$base_commit" >/dev/null
 node "$repo_root/bin/nemoclaw-oauth.js" check "$tmpdir"
 node "$repo_root/bin/nemoclaw-oauth.js" apply "$tmpdir"
+node "$repo_root/bin/nemoclaw-oauth.js" reverse "$tmpdir"
+
+if [ -n "$(git -C "$tmpdir" status --porcelain)" ]; then
+  echo "verification failed: worktree is not clean after reverse" >&2
+  git -C "$tmpdir" status --short >&2
+  exit 1
+fi
 
 if [ -x "$(command -v npm)" ] && [ -f "$tmpdir/package.json" ]; then
-  echo "note: patch applied to clean worktree at $tmpdir"
-  echo "note: run the validation commands from patches/manifest.json there if dependencies are installed"
+  echo "note: patch apply and reverse succeeded in clean worktree at $tmpdir"
+  echo "note: run the validation commands from patches/manifest.json in a patched NemoClaw checkout if dependencies are installed"
 fi

@@ -1,7 +1,19 @@
 {
-  "name": "nemoclaw-oauth",
+  "name": "@butterlatticelab/nemoclaw-oauth",
   "version": "0.1.0",
-  "description": "npm-ready patch package for applying the validated NemoClaw auth patch",
+  "description": "Patch-distribution CLI for applying the validated NemoClaw OpenAI Codex OAuth patch",
+  "author": {
+    "name": "Butterlattice Lab",
+    "url": "https://github.com/butterlatticelab"
+  },
+  "homepage": "https://github.com/butterlatticelab/nemoclaw-oauth#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/butterlatticelab/nemoclaw-oauth.git"
+  },
+  "bugs": {
+    "url": "https://github.com/butterlatticelab/nemoclaw-oauth/issues"
+  },
   "license": "Apache-2.0",
   "keywords": [
     "nemoclaw",
@@ -15,6 +27,7 @@
     "nemoclaw-oauth": "./bin/nemoclaw-oauth.js"
   },
   "files": [
+    "LICENSE",
     "README.md",
     "apply.sh",
     "bin/",

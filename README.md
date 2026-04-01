@@ -1,37 +1,46 @@
 # `nemoclaw-oauth`
 
-Portable, npm-ready patch package repo for NemoClaw auth-parity work.
+`@butterlatticelab/nemoclaw-oauth` is a small patch-distribution package for [NVIDIA/NemoClaw](https://github.com/NVIDIA/NemoClaw). It ships a checked-in patch and a minimal CLI that verifies, applies, and reverses that patch against a local NemoClaw checkout.
 
-This repo is structured so the checked-in patch can be applied directly to future NemoClaw checkouts today and later shipped as a small npm CLI package.
+The current patch adds OpenAI Codex OAuth support to NemoClaw while preserving the existing upstream OpenAI API key and Anthropic API key paths.
 
-The canonical patch currently ships the **validated NemoClaw source delta** that was applied locally to add **OpenAI Codex OAuth** support while preserving the existing upstream OpenAI and Anthropic provider paths already present in NemoClaw.
+## What this package does
 
-Why this is a patch package instead of an OpenClaw plugin:
+The checked-in patch updates NemoClaw itself to:
 
-- the missing behavior lives inside NemoClaw itself
-- the working fix changes NemoClaw onboarding, sandbox auth sync, image wiring, and status rendering
-- an OpenClaw provider plugin alone would not recreate that behavior
+- add `openai-codex` as a supported onboarding and inference option
+- configure the sandbox model metadata for ChatGPT OAuth-backed Codex models
+- sync OpenClaw OAuth credentials from the host into the sandbox
+- add the sandbox `credentials` path required for OAuth state
+- update NemoClaw status and provider-registration behavior for the OAuth-backed path
+- include tests covering the new provider mapping and auth-sync behavior
 
-## Current auth scope
+## Why this is distributed as a patch package
 
-- OpenAI API key: existing NemoClaw path, unchanged
-- OpenAI Codex OAuth: added by the patch in this repo
-- Anthropic API key: existing NemoClaw path, unchanged
+This repository distributes a source patch for NemoClaw itself. The change set modifies NemoClaw source files, Dockerfiles, onboarding flow, sandbox auth synchronization, and tests, so the correct delivery format is a patch against NemoClaw rather than an installable OpenClaw plugin.
 
-This repo targets OpenClaw auth parity for OpenAI and Anthropic, but the checked-in patch only contains the validated local NemoClaw delta. It does **not** invent a new Anthropic browser OAuth flow.
+## Supported auth behavior
 
-## Repo layout
+- OpenAI API key: upstream NemoClaw behavior, unchanged
+- OpenAI Codex OAuth: added by the patch in this repository
+- Anthropic API key: upstream NemoClaw behavior, unchanged
 
-- `patches/0001-openai-codex-oauth.patch`: canonical patch artifact
-- `patches/manifest.json`: patch metadata, included paths, validation commands
-- `bin/nemoclaw-oauth.js`: CLI for `check`, `apply`, and `manifest`
-- `apply.sh`: convenience wrapper around the CLI
-- `scripts/verify-apply.sh`: apply-check helper against a clean worktree
-- `scripts/regenerate-patch.sh`: rebuild the patch from a patched NemoClaw checkout
+This repository does not add a new Anthropic browser OAuth flow.
 
-## Usage
+## Prerequisites
 
-Check whether the patch applies:
+Before applying the patch, make sure you have:
+
+- Node.js `>=18`
+- `git`
+- a local NemoClaw git checkout
+- a checkout that contains, or is reasonably close to, base commit `f59f58e706ae4121c2f5b3b3b398a844236a50d1`
+
+Applying the patch on a clean branch or disposable worktree is strongly recommended.
+
+## Quick start
+
+Check whether the patch applies cleanly:
 
 ```bash
 node ./bin/nemoclaw-oauth.js check /path/to/NemoClaw
@@ -49,34 +58,100 @@ Convenience wrapper:
 ./apply.sh /path/to/NemoClaw
 ```
 
-Print patch metadata:
+Print the patch metadata:
 
 ```bash
 node ./bin/nemoclaw-oauth.js manifest
 ```
 
-Later npm usage, once you publish it, is expected to look like:
+Expected npm usage after publishing:
 
 ```bash
-npx nemoclaw-oauth apply /path/to/NemoClaw
+npx @butterlatticelab/nemoclaw-oauth apply /path/to/NemoClaw
+```
+
+Reverse the patch:
+
+```bash
+node ./bin/nemoclaw-oauth.js reverse /path/to/NemoClaw
+```
+
+Alias:
+
+```bash
+node ./bin/nemoclaw-oauth.js revert /path/to/NemoClaw
 ```
 
 ## Validation
 
-Dry-run package contents:
+Dry-run the npm package contents:
 
 ```bash
 npm pack --dry-run
 ```
 
-Check the patch against a clean worktree created from an existing NemoClaw checkout:
+Verify that the patch applies against a clean worktree created from the manifest base commit:
 
 ```bash
 ./scripts/verify-apply.sh /path/to/NemoClaw
 ```
 
-## npm intent
+After applying the patch to NemoClaw, run the validation commands listed in `patches/manifest.json` from the patched NemoClaw checkout:
 
-This repo is structured from the start for later npm deployment as a small CLI package that applies the checked-in NemoClaw patch.
+```bash
+npm test -- test/inference-config.test.js test/onboard.test.js nemoclaw/src/onboard/config.test.ts nemoclaw/src/commands/slash.test.ts nemoclaw/src/register.test.ts
+npm run typecheck:cli
+```
 
-Nothing in this repo commits or pushes on your behalf.
+Applying the patch is only the first step. The target checkout should still pass its relevant tests and type checks.
+
+## Rollback and failure modes
+
+Rollback the patch from a checkout where it has already been applied:
+
+```bash
+node ./bin/nemoclaw-oauth.js reverse /path/to/NemoClaw
+```
+
+The CLI warns when the target worktree is dirty before `apply` or `reverse`. It does not block execution, but patching a clean branch or disposable worktree is still the safest workflow.
+
+Common outcomes:
+
+- `apply` reports that the patch already appears to be applied: use `reverse` or `revert` instead of reapplying it
+- `reverse` reports that the patch does not appear to be applied: use `apply` first
+- the CLI reports an incompatible checkout: the target revision has drifted too far for `git apply --3way` to reconcile automatically
+- the CLI reports that the base commit is missing from local history: the patch may still apply, but 3-way merge assistance will be best-effort only
+
+## Compatibility
+
+The checked-in patch is validated against:
+
+- target repository: `https://github.com/NVIDIA/NemoClaw.git`
+- base commit: `f59f58e706ae4121c2f5b3b3b398a844236a50d1`
+
+The CLI uses `git apply --3way` for `check`, `apply`, and `reverse`. That makes it more tolerant of nearby upstream changes, but successful application is not guaranteed on arbitrarily newer NemoClaw revisions.
+
+## Repository contents
+
+- `patches/0001-openai-codex-oauth.patch`: canonical patch artifact
+- `patches/manifest.json`: patch metadata, target revision, included paths, and validation commands
+- `bin/nemoclaw-oauth.js`: CLI for `check`, `apply`, `reverse`, `revert`, and `manifest`
+- `apply.sh`: convenience wrapper around the CLI
+- `scripts/verify-apply.sh`: verify forward apply and rollback against a clean worktree
+- `scripts/regenerate-patch.sh`: rebuild the patch from a patched NemoClaw checkout
+
+## Maintainer workflow
+
+Rebuild the patch from an upstream checkout and a patched checkout:
+
+```bash
+./scripts/regenerate-patch.sh /path/to/upstream-nemoclaw /path/to/patched-nemoclaw
+```
+
+Verify that the patch still applies from the recorded base commit:
+
+```bash
+./scripts/verify-apply.sh /path/to/NemoClaw
+```
+
+Nothing in this repository commits or pushes on your behalf.
