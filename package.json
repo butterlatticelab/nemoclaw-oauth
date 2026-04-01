@@ -1,0 +1,34 @@
+{
+  "name": "nemoclaw-oauth",
+  "version": "0.1.0",
+  "description": "npm-ready patch package for applying the validated NemoClaw auth patch",
+  "license": "Apache-2.0",
+  "keywords": [
+    "nemoclaw",
+    "openclaw",
+    "oauth",
+    "patch",
+    "openai",
+    "anthropic"
+  ],
+  "bin": {
+    "nemoclaw-oauth": "./bin/nemoclaw-oauth.js"
+  },
+  "files": [
+    "README.md",
+    "apply.sh",
+    "bin/",
+    "patches/",
+    "scripts/"
+  ],
+  "scripts": {
+    "manifest": "node ./bin/nemoclaw-oauth.js manifest",
+    "pack:dry-run": "npm pack --dry-run"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

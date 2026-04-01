@@ -1,0 +1,44 @@
+{
+  "patchId": "nemoclaw-openai-codex-oauth",
+  "description": "Portable NemoClaw patch that adds OpenAI Codex OAuth support while preserving the existing upstream OpenAI and Anthropic provider paths.",
+  "npmPackage": {
+    "name": "nemoclaw-oauth",
+    "publishIntent": "planned"
+  },
+  "targetRepo": "https://github.com/NVIDIA/NemoClaw.git",
+  "targetPackage": "nemoclaw",
+  "baseCommit": "f59f58e706ae4121c2f5b3b3b398a844236a50d1",
+  "validatedAgainst": "f59f58e706ae4121c2f5b3b3b398a844236a50d1",
+  "patchFile": "patches/0001-openai-codex-oauth.patch",
+  "includedPaths": [
+    "Dockerfile",
+    "Dockerfile.base",
+    "bin/lib/inference-config.js",
+    "bin/lib/onboard.js",
+    "nemoclaw/src/commands/slash.test.ts",
+    "nemoclaw/src/commands/slash.ts",
+    "nemoclaw/src/index.ts",
+    "nemoclaw/src/onboard/config.test.ts",
+    "nemoclaw/src/onboard/config.ts",
+    "nemoclaw/src/register.test.ts",
+    "test/e2e-gateway-isolation.sh",
+    "test/inference-config.test.js",
+    "test/onboard.test.js"
+  ],
+  "supportedAuth": {
+    "openaiApiKey": "upstream",
+    "openaiCodexOAuth": "patched",
+    "anthropicApiKey": "upstream"
+  },
+  "excludedLocalHunks": [
+    "custom ~/nemoclaw/config/openclaw-sandbox.yaml selection",
+    "openshell binary path fallback tweak",
+    "conda path setup",
+    "conda ToS acceptance",
+    "host-specific local forwarding behavior"
+  ],
+  "testCommands": [
+    "npm test -- test/inference-config.test.js test/onboard.test.js nemoclaw/src/onboard/config.test.ts nemoclaw/src/commands/slash.test.ts nemoclaw/src/register.test.ts",
+    "npm run typecheck:cli"
+  ]
+}

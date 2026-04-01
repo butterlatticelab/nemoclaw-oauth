@@ -1,0 +1,24 @@
+# Editor / OS noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Scratch / temp files
+*.log
+*.tmp
+*.temp
+*.tgz
+.cache/
+.npm/
+coverage/
+dist/
+node_modules/
+tmp/
+
+# Patch/apply leftovers
+*.orig
+*.rej
