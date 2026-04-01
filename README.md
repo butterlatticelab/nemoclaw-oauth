@@ -1,8 +1,14 @@
 # `nemoclaw-oauth`
 
-`@butterlatticelab/nemoclaw-oauth` is a small patch-distribution package for [NVIDIA/NemoClaw](https://github.com/NVIDIA/NemoClaw). It ships a checked-in patch and a minimal CLI that verifies, applies, and reverses that patch against a local NemoClaw checkout.
+`@phflot/nemoclaw-oauth` is a small patch-distribution package for [NVIDIA/NemoClaw](https://github.com/NVIDIA/NemoClaw). It ships a checked-in patch and a minimal CLI that verifies, applies, and reverses that patch against a local NemoClaw checkout.
 
-The current patch adds OpenAI Codex OAuth support to NemoClaw while preserving the existing upstream OpenAI API key and Anthropic API key paths.
+The current patch fills the stock NemoClaw OpenAI Codex OAuth integration gap while preserving the existing upstream OpenAI API key and Anthropic API key paths.
+
+## Upstream context
+
+Current OpenClaw upstream already supports OpenAI Codex OAuth on the host side, including `openclaw onboard --auth-choice openai-codex` and `openclaw models auth login --provider openai-codex`.
+
+The gap this repository addresses is narrower and more specific: stock NemoClaw does not provide a documented, end-to-end path from `nemoclaw onboard` to a working Codex-OAuth-backed NemoClaw sandbox. This patch integrates that existing OpenClaw capability into NemoClaw itself.
 
 ## What this package does
 
@@ -10,8 +16,9 @@ The checked-in patch updates NemoClaw itself to:
 
 - add `openai-codex` as a supported onboarding and inference option
 - configure the sandbox model metadata for ChatGPT OAuth-backed Codex models
-- sync OpenClaw OAuth credentials from the host into the sandbox
-- add the sandbox `credentials` path required for OAuth state
+- sync OpenClaw OAuth credentials from the host into the sandbox from the primary `auth-profiles.json` store
+- carry forward legacy `~/.openclaw/credentials/oauth.json` compatibility data when present
+- add the sandbox `credentials` path required for compatibility OAuth state
 - update NemoClaw status and provider-registration behavior for the OAuth-backed path
 - include tests covering the new provider mapping and auth-sync behavior
 
@@ -26,6 +33,8 @@ This repository distributes a source patch for NemoClaw itself. The change set m
 - Anthropic API key: upstream NemoClaw behavior, unchanged
 
 This repository does not add a new Anthropic browser OAuth flow.
+
+OpenClaw's primary auth store is `auth-profiles.json`. The extra `oauth.json` handling in this patch is compatibility support for legacy OpenClaw OAuth import state, not the primary credential source.
 
 ## Prerequisites
 
@@ -67,7 +76,7 @@ node ./bin/nemoclaw-oauth.js manifest
 Expected npm usage after publishing:
 
 ```bash
-npx @butterlatticelab/nemoclaw-oauth apply /path/to/NemoClaw
+npx @phflot/nemoclaw-oauth apply /path/to/NemoClaw
 ```
 
 Reverse the patch:

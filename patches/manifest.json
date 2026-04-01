@@ -1,8 +1,8 @@
 {
   "patchId": "nemoclaw-openai-codex-oauth",
-  "description": "Portable NemoClaw patch that adds OpenAI Codex OAuth support while preserving the existing upstream OpenAI and Anthropic provider paths.",
+  "description": "Portable NemoClaw patch that fills the stock NemoClaw Codex OAuth integration gap while preserving the existing upstream OpenAI and Anthropic API-key paths.",
   "npmPackage": {
-    "name": "@butterlatticelab/nemoclaw-oauth",
+    "name": "@phflot/nemoclaw-oauth",
     "publishIntent": "planned"
   },
   "targetRepo": "https://github.com/NVIDIA/NemoClaw.git",
