@@ -1,5 +1,5 @@
 diff --git a/Dockerfile b/Dockerfile
-index 309ba1d8feb9923cac7958c34dd3186889806ec3..56737de1bb70e2625ff6084b2f780e04a50a4fff 100644
+index 309ba1d8feb9923cac7958c34dd3186889806ec3..b6523b298cf8505889d9a6ec5afdde2977a71ac9 100644
 --- a/Dockerfile
 +++ b/Dockerfile
 @@ -27,6 +27,14 @@ RUN (apt-get remove --purge -y gcc gcc-12 g++ g++-12 cpp cpp-12 make \
@@ -17,11 +17,13 @@ index 309ba1d8feb9923cac7958c34dd3186889806ec3..56737de1bb70e2625ff6084b2f780e04
  # Copy built plugin and blueprint into the sandbox
  COPY --from=builder /opt/nemoclaw/dist/ /opt/nemoclaw/dist/
  COPY nemoclaw/openclaw.plugin.json /opt/nemoclaw/
-@@ -87,20 +95,25 @@ primary_model_ref = os.environ['NEMOCLAW_PRIMARY_MODEL_REF']; \
+@@ -87,20 +95,27 @@ primary_model_ref = os.environ['NEMOCLAW_PRIMARY_MODEL_REF']; \
  inference_base_url = os.environ['NEMOCLAW_INFERENCE_BASE_URL']; \
  inference_api = os.environ['NEMOCLAW_INFERENCE_API']; \
  inference_compat = json.loads(base64.b64decode(os.environ['NEMOCLAW_INFERENCE_COMPAT_B64']).decode('utf-8')); \
 +is_openai_codex = provider_key == 'openai-codex'; \
++is_anthropic_oauth = provider_key == 'anthropic' and inference_base_url == 'https://api.anthropic.com'; \
++is_auth_profile_provider = is_openai_codex or is_anthropic_oauth; \
  parsed = urlparse(chat_ui_url); \
  chat_origin = f'{parsed.scheme}://{parsed.netloc}' if parsed.scheme and parsed.netloc else 'http://127.0.0.1:18789'; \
  origins = ['http://127.0.0.1:18789']; \
@@ -38,7 +40,7 @@ index 309ba1d8feb9923cac7958c34dd3186889806ec3..56737de1bb70e2625ff6084b2f780e04
 +    'baseUrl': inference_base_url, \
 +    'api': inference_api, \
 +    'models': [model_entry], \
-+    **({} if is_openai_codex else {'apiKey': 'unused'}), \
++    **({} if is_auth_profile_provider else {'apiKey': 'unused'}), \
 +}; \
 +providers = {provider_key: provider_config}; \
 +agent_defaults = { \
@@ -72,18 +74,19 @@ index cf795399aebf89334a550d4c57a657e6ed3805ea..84082911d60481adc1dd89f2f02f90e6
      && ln -s /sandbox/.openclaw-data/update-check.json /sandbox/.openclaw/update-check.json \
      && chown -R sandbox:sandbox /sandbox/.openclaw /sandbox/.openclaw-data
 diff --git a/bin/lib/inference-config.js b/bin/lib/inference-config.js
-index 6384d8a60e1f5b726d271ba230a53c3e648de2b6..c08906f6330f1ba2c4eb7aeefd2ad521e850297b 100644
+index 6384d8a60e1f5b726d271ba230a53c3e648de2b6..fa8efc164a4dfec7f1840fdeb707df9da909be08 100644
 --- a/bin/lib/inference-config.js
 +++ b/bin/lib/inference-config.js
-@@ -2,6 +2,7 @@
+@@ -2,6 +2,8 @@
  // SPDX-License-Identifier: Apache-2.0
  
  const INFERENCE_ROUTE_URL = "https://inference.local/v1";
 +const OPENAI_CODEX_BASE_URL = "https://chatgpt.com/backend-api";
++const ANTHROPIC_CLAUDE_CLI_BASE_URL = "https://api.anthropic.com";
  const DEFAULT_CLOUD_MODEL = "nvidia/nemotron-3-super-120b-a12b";
  const CLOUD_MODEL_OPTIONS = [
    { id: "nvidia/nemotron-3-super-120b-a12b", label: "Nemotron 3 Super 120B" },
-@@ -41,6 +42,17 @@ function getProviderSelectionConfig(provider, model) {
+@@ -41,6 +43,28 @@ function getProviderSelectionConfig(provider, model) {
          provider,
          providerLabel: "OpenAI",
        };
@@ -98,29 +101,44 @@ index 6384d8a60e1f5b726d271ba230a53c3e648de2b6..c08906f6330f1ba2c4eb7aeefd2ad521
 +        provider,
 +        providerLabel: "OpenAI Codex (ChatGPT OAuth)",
 +      };
++    case "anthropic-claude-cli-oauth":
++      return {
++        endpointType: "anthropic-claude-cli-oauth",
++        endpointUrl: ANTHROPIC_CLAUDE_CLI_BASE_URL,
++        ncpPartner: null,
++        model: model || "claude-sonnet-4-6",
++        profile: "default",
++        credentialEnv: null,
++        provider,
++        providerLabel: "Anthropic Claude CLI (subscription OAuth reuse)",
++      };
      case "anthropic-prod":
        return {
          endpointType: "custom",
-@@ -113,6 +125,9 @@ function getProviderSelectionConfig(provider, model) {
+@@ -113,6 +137,12 @@ function getProviderSelectionConfig(provider, model) {
  }
  
  function getOpenClawPrimaryModel(provider, model) {
 +  if (provider === "openai-codex") {
 +    return model ? `openai-codex/${model}` : "openai-codex/gpt-5.4";
 +  }
++  if (provider === "anthropic-claude-cli-oauth") {
++    return model ? `anthropic/${model}` : "anthropic/claude-sonnet-4-6";
++  }
    const resolvedModel =
      model || (provider === "ollama-local" ? DEFAULT_OLLAMA_MODEL : DEFAULT_CLOUD_MODEL);
    return resolvedModel ? `${MANAGED_PROVIDER_ID}/${resolvedModel}` : null;
-@@ -137,6 +152,7 @@ module.exports = {
+@@ -137,6 +167,8 @@ module.exports = {
    DEFAULT_ROUTE_PROFILE,
    INFERENCE_ROUTE_URL,
    MANAGED_PROVIDER_ID,
++  ANTHROPIC_CLAUDE_CLI_BASE_URL,
 +  OPENAI_CODEX_BASE_URL,
    getOpenClawPrimaryModel,
    getProviderSelectionConfig,
    parseGatewayInference,
 diff --git a/bin/lib/onboard.js b/bin/lib/onboard.js
-index fa5150a980aed3023c05f44ed40987a6f95cd694..036c216f171fb5c8c955113d0cf9035281534bf1 100644
+index fa5150a980aed3023c05f44ed40987a6f95cd694..e4437e8f4ef5d7a2b05828522491aa2d5ef92f86 100644
 --- a/bin/lib/onboard.js
 +++ b/bin/lib/onboard.js
 @@ -10,7 +10,7 @@ const os = require("os");
@@ -132,24 +150,30 @@ index fa5150a980aed3023c05f44ed40987a6f95cd694..036c216f171fb5c8c955113d0cf90352
  const {
    getDefaultOllamaModel,
    getBootstrapOllamaModelOptions,
-@@ -24,6 +24,7 @@ const {
+@@ -24,6 +24,8 @@ const {
  const {
    CLOUD_MODEL_OPTIONS,
    DEFAULT_CLOUD_MODEL,
++  ANTHROPIC_CLAUDE_CLI_BASE_URL,
 +  OPENAI_CODEX_BASE_URL,
    getProviderSelectionConfig,
    parseGatewayInference,
  } = require("./inference-config");
-@@ -50,6 +51,8 @@ const BUILD_ENDPOINT_URL = "https://integrate.api.nvidia.com/v1";
+@@ -50,6 +52,13 @@ const BUILD_ENDPOINT_URL = "https://integrate.api.nvidia.com/v1";
  const OPENAI_ENDPOINT_URL = "https://api.openai.com/v1";
  const ANTHROPIC_ENDPOINT_URL = "https://api.anthropic.com";
  const GEMINI_ENDPOINT_URL = "https://generativelanguage.googleapis.com/v1beta/openai/";
 +const OPENAI_CODEX_DEFAULT_MODEL = "gpt-5.4";
 +const OPENAI_CODEX_PROVIDER = "openai-codex";
++const ANTHROPIC_CLAUDE_CLI_DEFAULT_MODEL = "claude-sonnet-4-6";
++const ANTHROPIC_CLAUDE_CLI_PROVIDER = "anthropic-claude-cli-oauth";
++const CLAUDE_CLI_PROFILE_ID = "anthropic:claude-cli";
++const CLAUDE_CLI_CREDENTIALS_RELATIVE_PATH = path.join(".claude", ".credentials.json");
++const CLAUDE_CLI_KEYCHAIN_SERVICE = "Claude Code-credentials";
  
  const REMOTE_PROVIDER_CONFIG = {
    build: {
-@@ -73,6 +76,17 @@ const REMOTE_PROVIDER_CONFIG = {
+@@ -73,6 +82,28 @@ const REMOTE_PROVIDER_CONFIG = {
      defaultModel: "gpt-5.4",
      skipVerify: true,
    },
@@ -164,10 +188,21 @@ index fa5150a980aed3023c05f44ed40987a6f95cd694..036c216f171fb5c8c955113d0cf90352
 +    defaultModel: OPENAI_CODEX_DEFAULT_MODEL,
 +    skipVerify: true,
 +  },
++  anthropicClaudeCli: {
++    label: "Anthropic Claude CLI (subscription OAuth reuse)",
++    providerName: ANTHROPIC_CLAUDE_CLI_PROVIDER,
++    providerType: "anthropic",
++    credentialEnv: null,
++    endpointUrl: ANTHROPIC_CLAUDE_CLI_BASE_URL,
++    helpUrl: null,
++    modelMode: "curated",
++    defaultModel: ANTHROPIC_CLAUDE_CLI_DEFAULT_MODEL,
++    skipVerify: true,
++  },
    anthropic: {
      label: "Anthropic",
      providerName: "anthropic-prod",
-@@ -124,6 +138,11 @@ const REMOTE_MODEL_OPTIONS = {
+@@ -124,6 +155,16 @@ const REMOTE_MODEL_OPTIONS = {
      "gpt-5.4-nano",
      "gpt-5.4-pro-2026-03-05",
    ],
@@ -176,10 +211,15 @@ index fa5150a980aed3023c05f44ed40987a6f95cd694..036c216f171fb5c8c955113d0cf90352
 +    "gpt-5.3-codex",
 +    "gpt-5.3-codex-spark",
 +  ],
++  anthropicClaudeCli: [
++    "claude-sonnet-4-6",
++    "claude-haiku-4-5",
++    "claude-opus-4-6",
++  ],
    anthropic: [
      "claude-sonnet-4-6",
      "claude-haiku-4-5",
-@@ -448,6 +467,86 @@ function hydrateCredentialEnv(envName) {
+@@ -448,6 +489,186 @@ function hydrateCredentialEnv(envName) {
    return value || null;
  }
  
@@ -210,6 +250,73 @@ index fa5150a980aed3023c05f44ed40987a6f95cd694..036c216f171fb5c8c955113d0cf90352
 +  } catch {
 +    return null;
 +  }
++}
++
++function resolveClaudeCliCredentialsPath(homeDir = process.env.HOME || os.homedir()) {
++  return path.join(homeDir, CLAUDE_CLI_CREDENTIALS_RELATIVE_PATH);
++}
++
++function parseClaudeCliCredential(claudeOauth) {
++  if (!claudeOauth || typeof claudeOauth !== "object") return null;
++  const accessToken = claudeOauth.accessToken;
++  const refreshToken = claudeOauth.refreshToken;
++  const expiresAt = claudeOauth.expiresAt;
++  if (typeof accessToken !== "string" || !accessToken) return null;
++  if (typeof expiresAt !== "number" || !Number.isFinite(expiresAt) || expiresAt <= 0) return null;
++  if (typeof refreshToken === "string" && refreshToken) {
++    return {
++      type: "oauth",
++      provider: "anthropic",
++      access: accessToken,
++      refresh: refreshToken,
++      expires: expiresAt,
++    };
++  }
++  return {
++    type: "token",
++    provider: "anthropic",
++    token: accessToken,
++    expires: expiresAt,
++  };
++}
++
++function readClaudeCliKeychainCredential() {
++  if (process.platform !== "darwin") {
++    return null;
++  }
++  try {
++    const result = spawnSync(
++      "security",
++      ["find-generic-password", "-s", CLAUDE_CLI_KEYCHAIN_SERVICE, "-w"],
++      {
++        encoding: "utf8",
++        timeout: 5000,
++        stdio: ["ignore", "pipe", "pipe"],
++      }
++    );
++    if (result.status !== 0 || !result.stdout) {
++      return null;
++    }
++    return parseClaudeCliCredential(JSON.parse(result.stdout.trim())?.claudeAiOauth);
++  } catch {
++    return null;
++  }
++}
++
++function readClaudeCliCredential() {
++  const keychainCredential = readClaudeCliKeychainCredential();
++  if (keychainCredential) {
++    return keychainCredential;
++  }
++  const raw = readJsonFileIfExists(resolveClaudeCliCredentialsPath());
++  if (!raw || typeof raw !== "object") {
++    return null;
++  }
++  return parseClaudeCliCredential(raw.claudeAiOauth);
++}
++
++function hasClaudeCliCredential() {
++  return Boolean(readClaudeCliCredential());
 +}
 +
 +function listOpenAICodexOAuthProfiles() {
@@ -263,10 +370,43 @@ index fa5150a980aed3023c05f44ed40987a6f95cd694..036c216f171fb5c8c955113d0cf90352
 +  console.log("  ✓ OpenAI Codex OAuth ready");
 +}
 +
++function ensureClaudeCliOAuth() {
++  if (hasClaudeCliCredential()) {
++    return;
++  }
++  const hasClaudeBinary = Boolean(runCapture("command -v claude", { ignoreError: true }));
++  if (!hasClaudeBinary) {
++    console.error("  Claude CLI was not found on the host.");
++    console.error("  Install Claude Code, run `claude auth login`, then re-run onboarding.");
++    process.exit(1);
++  }
++  if (!process.stdin.isTTY || !process.stdout.isTTY) {
++    console.error("  Claude CLI OAuth reuse requires an interactive terminal on first login.");
++    console.error("  Run: claude auth login");
++    process.exit(1);
++  }
++
++  console.log("  Launching Claude CLI login on the host...");
++  const result = runInteractive("claude auth login", { ignoreError: true, stdio: "inherit" });
++  if (result.status !== 0) {
++    console.error("  Claude CLI login failed.");
++    process.exit(result.status || 1);
++  }
++  if (!hasClaudeCliCredential()) {
++    console.error("  Claude CLI login completed, but no reusable credential was written.");
++    process.exit(1);
++  }
++  console.log("  ✓ Claude CLI OAuth ready");
++}
++
++function providerRequiresSandboxAuthSync(provider) {
++  return provider === OPENAI_CODEX_PROVIDER || provider === ANTHROPIC_CLAUDE_CLI_PROVIDER;
++}
++
  function getCurlTimingArgs() {
    return ["--connect-timeout 10", "--max-time 60"];
  }
-@@ -479,6 +578,13 @@ function upsertProvider(name, type, credentialEnv, baseUrl, env = {}) {
+@@ -479,6 +700,21 @@ function upsertProvider(name, type, credentialEnv, baseUrl, env = {}) {
  }
  
  function verifyInferenceRoute(_provider, _model) {
@@ -277,20 +417,31 @@ index fa5150a980aed3023c05f44ed40987a6f95cd694..036c216f171fb5c8c955113d0cf90352
 +    }
 +    return;
 +  }
++  if (_provider === ANTHROPIC_CLAUDE_CLI_PROVIDER) {
++    if (!hasClaudeCliCredential()) {
++      console.error("  Claude CLI OAuth is not configured on the host.");
++      console.error("  Run `claude auth login` or fall back to setup-token / API key.");
++      process.exit(1);
++    }
++    return;
++  }
    const output = runCaptureOpenshell(["inference", "get"], { ignoreError: true });
    if (!output || /Gateway inference:\s*[\r\n]+\s*Not configured/i.test(output)) {
      console.error("  OpenShell inference route was not configured.");
-@@ -487,6 +593,9 @@ function verifyInferenceRoute(_provider, _model) {
+@@ -487,6 +723,12 @@ function verifyInferenceRoute(_provider, _model) {
  }
  
  function isInferenceRouteReady(provider, model) {
 +  if (provider === OPENAI_CODEX_PROVIDER) {
 +    return hasOpenAICodexOAuthProfile() && typeof model === "string" && model.length > 0;
 +  }
++  if (provider === ANTHROPIC_CLAUDE_CLI_PROVIDER) {
++    return hasClaudeCliCredential() && typeof model === "string" && model.length > 0;
++  }
    const live = parseGatewayInference(runCaptureOpenshell(["inference", "get"], { ignoreError: true }));
    return Boolean(live && live.provider === provider && live.model === model);
  }
-@@ -530,6 +639,194 @@ function writeSandboxConfigSyncFile(script, tmpDir = os.tmpdir(), now = Date.now
+@@ -530,6 +772,234 @@ function writeSandboxConfigSyncFile(script, tmpDir = os.tmpdir(), now = Date.now
    return scriptFile;
  }
  
@@ -365,6 +516,40 @@ index fa5150a980aed3023c05f44ed40987a6f95cd694..036c216f171fb5c8c955113d0cf90352
 +  return auth;
 +}
 +
++function writeAuthExportBundle(bundleDir, profiles, options = {}) {
++  const profileEntries = Object.entries(profiles || {});
++  if (profileEntries.length === 0) {
++    return null;
++  }
++
++  const authStore = {
++    version: typeof options.version === "number" ? options.version : 1,
++    profiles: Object.fromEntries(profileEntries),
++  };
++  const piAuth = buildPiAuthJsonFromProfiles(authStore.profiles);
++  const agentDir = path.join(bundleDir, "agents", "main", "agent");
++  const authProfilesPath = path.join(agentDir, "auth-profiles.json");
++  fs.mkdirSync(agentDir, { recursive: true, mode: 0o700 });
++  fs.writeFileSync(authProfilesPath, `${JSON.stringify(authStore, null, 2)}\n`, { mode: 0o600 });
++
++  let authJsonPath = null;
++  if (Object.keys(piAuth).length > 0) {
++    authJsonPath = path.join(agentDir, "auth.json");
++    fs.writeFileSync(authJsonPath, `${JSON.stringify(piAuth, null, 2)}\n`, { mode: 0o600 });
++  }
++
++  let oauthJsonPath = null;
++  if (options.legacyOauthPath && fs.existsSync(options.legacyOauthPath)) {
++    const credentialsDir = path.join(bundleDir, "credentials");
++    fs.mkdirSync(credentialsDir, { recursive: true, mode: 0o700 });
++    oauthJsonPath = path.join(credentialsDir, "oauth.json");
++    fs.copyFileSync(options.legacyOauthPath, oauthJsonPath);
++    fs.chmodSync(oauthJsonPath, 0o600);
++  }
++
++  return { authProfilesPath, authJsonPath, oauthJsonPath };
++}
++
 +function buildOpenAICodexAuthExportBundle(bundleDir) {
 +  const store = readJsonFileIfExists(getHostOpenclawAuthStorePath());
 +  const profiles = store && typeof store === "object" && store.profiles && typeof store.profiles === "object"
@@ -381,34 +566,80 @@ index fa5150a980aed3023c05f44ed40987a6f95cd694..036c216f171fb5c8c955113d0cf90352
 +    return null;
 +  }
 +
-+  const filteredProfiles = Object.fromEntries(filteredEntries);
-+  const authStore = {
++  return writeAuthExportBundle(bundleDir, Object.fromEntries(filteredEntries), {
 +    version: typeof store?.version === "number" ? store.version : 1,
-+    profiles: filteredProfiles,
-+  };
-+  const piAuth = buildPiAuthJsonFromProfiles(filteredProfiles);
-+  const agentDir = path.join(bundleDir, "agents", "main", "agent");
-+  const credentialsDir = path.join(bundleDir, "credentials");
-+  fs.mkdirSync(agentDir, { recursive: true, mode: 0o700 });
-+  fs.mkdirSync(credentialsDir, { recursive: true, mode: 0o700 });
-+  const authProfilesPath = path.join(agentDir, "auth-profiles.json");
-+  fs.writeFileSync(authProfilesPath, `${JSON.stringify(authStore, null, 2)}\n`, { mode: 0o600 });
++    legacyOauthPath: getHostOpenclawLegacyOAuthPath(),
++  });
++}
 +
-+  let authJsonPath = null;
-+  if (Object.keys(piAuth).length > 0) {
-+    authJsonPath = path.join(agentDir, "auth.json");
-+    fs.writeFileSync(authJsonPath, `${JSON.stringify(piAuth, null, 2)}\n`, { mode: 0o600 });
++function buildAnthropicClaudeCliAuthExportBundle(bundleDir) {
++  const credential = readClaudeCliCredential();
++  if (!credential) {
++    return null;
++  }
++  return writeAuthExportBundle(bundleDir, {
++    [CLAUDE_CLI_PROFILE_ID]: credential,
++  });
++}
++
++function syncAuthBundleIntoSandbox(sandboxName, bundle, options = {}) {
++  const includeLegacyOauth = options.includeLegacyOauth === true;
++  runSandboxScript(sandboxName, `
++set -euo pipefail
++mkdir -p /sandbox/.openclaw-data/agents/main/agent
++${includeLegacyOauth ? "mkdir -p /sandbox/.openclaw-data/credentials" : ""}
++chmod -R u+rwx /sandbox/.openclaw-data/agents/main/agent/auth-profiles.json 2>/dev/null || true
++chmod -R u+rwx /sandbox/.openclaw-data/agents/main/agent/auth.json 2>/dev/null || true
++${includeLegacyOauth ? "chmod -R u+rwx /sandbox/.openclaw-data/credentials/oauth.json 2>/dev/null || true" : ""}
++rm -rf /sandbox/.openclaw-data/agents/main/agent/auth-profiles.json
++rm -rf /sandbox/.openclaw-data/agents/main/agent/auth.json
++${includeLegacyOauth ? "rm -rf /sandbox/.openclaw-data/credentials/oauth.json" : ""}
++chmod 700 /sandbox/.openclaw-data/agents/main/agent${includeLegacyOauth ? " /sandbox/.openclaw-data/credentials" : ""} || true
++exit
++`.trim());
++
++  runOpenshell(
++    [
++      "sandbox",
++      "upload",
++      sandboxName,
++      bundle.authProfilesPath,
++      "/sandbox/.openclaw-data/agents/main/agent",
++    ],
++    { stdio: ["ignore", "ignore", "inherit"] }
++  );
++  if (bundle.authJsonPath) {
++    runOpenshell(
++      [
++        "sandbox",
++        "upload",
++        sandboxName,
++        bundle.authJsonPath,
++        "/sandbox/.openclaw-data/agents/main/agent",
++      ],
++      { stdio: ["ignore", "ignore", "inherit"] }
++    );
++  }
++  if (includeLegacyOauth && bundle.oauthJsonPath) {
++    runOpenshell(
++      [
++        "sandbox",
++        "upload",
++        sandboxName,
++        bundle.oauthJsonPath,
++        "/sandbox/.openclaw-data/credentials",
++      ],
++      { stdio: ["ignore", "ignore", "inherit"] }
++    );
 +  }
 +
-+  let oauthJsonPath = null;
-+  const legacyOauthPath = getHostOpenclawLegacyOAuthPath();
-+  if (fs.existsSync(legacyOauthPath)) {
-+    oauthJsonPath = path.join(credentialsDir, "oauth.json");
-+    fs.copyFileSync(legacyOauthPath, oauthJsonPath);
-+    fs.chmodSync(oauthJsonPath, 0o600);
-+  }
-+
-+  return { authProfilesPath, authJsonPath, oauthJsonPath };
++  runSandboxScript(sandboxName, `
++set -euo pipefail
++chmod 600 /sandbox/.openclaw-data/agents/main/agent/auth-profiles.json
++[ -f /sandbox/.openclaw-data/agents/main/agent/auth.json ] && chmod 600 /sandbox/.openclaw-data/agents/main/agent/auth.json
++${includeLegacyOauth ? "[ -f /sandbox/.openclaw-data/credentials/oauth.json ] && chmod 600 /sandbox/.openclaw-data/credentials/oauth.json" : ""}
++exit
++`.trim());
 +}
 +
 +function syncOpenAICodexOAuthIntoSandbox(sandboxName) {
@@ -420,63 +651,23 @@ index fa5150a980aed3023c05f44ed40987a6f95cd694..036c216f171fb5c8c955113d0cf90352
 +      console.error("  No OpenAI Codex OAuth profile was found to sync into the sandbox.");
 +      process.exit(1);
 +    }
++    syncAuthBundleIntoSandbox(sandboxName, bundle, { includeLegacyOauth: true });
++  } finally {
++    fs.rmSync(bundleDir, { recursive: true, force: true });
++  }
++}
 +
-+    runSandboxScript(sandboxName, `
-+set -euo pipefail
-+mkdir -p /sandbox/.openclaw-data/agents/main/agent
-+mkdir -p /sandbox/.openclaw-data/credentials
-+chmod -R u+rwx /sandbox/.openclaw-data/agents/main/agent/auth-profiles.json 2>/dev/null || true
-+chmod -R u+rwx /sandbox/.openclaw-data/agents/main/agent/auth.json 2>/dev/null || true
-+chmod -R u+rwx /sandbox/.openclaw-data/credentials/oauth.json 2>/dev/null || true
-+rm -rf /sandbox/.openclaw-data/agents/main/agent/auth-profiles.json
-+rm -rf /sandbox/.openclaw-data/agents/main/agent/auth.json
-+rm -rf /sandbox/.openclaw-data/credentials/oauth.json
-+chmod 700 /sandbox/.openclaw-data/agents/main/agent /sandbox/.openclaw-data/credentials || true
-+exit
-+`.trim());
-+
-+    runOpenshell(
-+      [
-+        "sandbox",
-+        "upload",
-+        sandboxName,
-+        bundle.authProfilesPath,
-+        "/sandbox/.openclaw-data/agents/main/agent",
-+      ],
-+      { stdio: ["ignore", "ignore", "inherit"] }
-+    );
-+    if (bundle.authJsonPath) {
-+      runOpenshell(
-+        [
-+          "sandbox",
-+          "upload",
-+          sandboxName,
-+          bundle.authJsonPath,
-+          "/sandbox/.openclaw-data/agents/main/agent",
-+        ],
-+        { stdio: ["ignore", "ignore", "inherit"] }
-+      );
++function syncAnthropicClaudeCliOAuthIntoSandbox(sandboxName) {
++  ensureClaudeCliOAuth();
++  const bundleDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-anthropic-claude-cli-"));
++  try {
++    const bundle = buildAnthropicClaudeCliAuthExportBundle(bundleDir);
++    if (!bundle) {
++      console.error("  No Claude CLI OAuth credential was found to sync into the sandbox.");
++      console.error("  Run `claude auth login` or fall back to setup-token / API key.");
++      process.exit(1);
 +    }
-+    if (bundle.oauthJsonPath) {
-+      runOpenshell(
-+        [
-+          "sandbox",
-+          "upload",
-+          sandboxName,
-+          bundle.oauthJsonPath,
-+          "/sandbox/.openclaw-data/credentials",
-+        ],
-+        { stdio: ["ignore", "ignore", "inherit"] }
-+      );
-+    }
-+
-+    runSandboxScript(sandboxName, `
-+set -euo pipefail
-+chmod 600 /sandbox/.openclaw-data/agents/main/agent/auth-profiles.json
-+[ -f /sandbox/.openclaw-data/agents/main/agent/auth.json ] && chmod 600 /sandbox/.openclaw-data/agents/main/agent/auth.json
-+[ -f /sandbox/.openclaw-data/credentials/oauth.json ] && chmod 600 /sandbox/.openclaw-data/credentials/oauth.json
-+exit
-+`.trim());
++    syncAuthBundleIntoSandbox(sandboxName, bundle);
 +  } finally {
 +    fs.rmSync(bundleDir, { recursive: true, force: true });
 +  }
@@ -485,7 +676,7 @@ index fa5150a980aed3023c05f44ed40987a6f95cd694..036c216f171fb5c8c955113d0cf90352
  function encodeDockerJsonArg(value) {
    return Buffer.from(JSON.stringify(value || {}), "utf8").toString("base64");
  }
-@@ -546,6 +843,12 @@ function getSandboxInferenceConfig(model, provider = null, preferredInferenceApi
+@@ -546,6 +1016,18 @@ function getSandboxInferenceConfig(model, provider = null, preferredInferenceApi
        providerKey = "openai";
        primaryModelRef = `openai/${model}`;
        break;
@@ -495,38 +686,49 @@ index fa5150a980aed3023c05f44ed40987a6f95cd694..036c216f171fb5c8c955113d0cf90352
 +      inferenceBaseUrl = OPENAI_CODEX_BASE_URL;
 +      inferenceApi = "openai-codex-responses";
 +      break;
++    case ANTHROPIC_CLAUDE_CLI_PROVIDER:
++      providerKey = "anthropic";
++      primaryModelRef = `anthropic/${model}`;
++      inferenceBaseUrl = ANTHROPIC_CLAUDE_CLI_BASE_URL;
++      inferenceApi = "anthropic-messages";
++      break;
      case "anthropic-prod":
      case "compatible-anthropic-endpoint":
        providerKey = "anthropic";
-@@ -1449,15 +1752,17 @@ function getNonInteractiveProvider() {
+@@ -1449,15 +1931,20 @@ function getNonInteractiveProvider() {
    if (!providerKey) return null;
    const aliases = {
      cloud: "build",
 +    "openai-codex": "openaiCodex",
 +    codex: "openaiCodex",
++    "anthropic-cli": "anthropicClaudeCli",
++    "claude-cli": "anthropicClaudeCli",
++    "anthropic-claude-cli-oauth": "anthropicClaudeCli",
      nim: "nim-local",
      vllm: "vllm",
      anthropiccompatible: "anthropicCompatible",
    };
    const normalized = aliases[providerKey] || providerKey;
 -  const validProviders = new Set(["build", "openai", "anthropic", "anthropicCompatible", "gemini", "ollama", "custom", "nim-local", "vllm"]);
-+  const validProviders = new Set(["build", "openai", "openaiCodex", "anthropic", "anthropicCompatible", "gemini", "ollama", "custom", "nim-local", "vllm"]);
++  const validProviders = new Set(["build", "openai", "openaiCodex", "anthropicClaudeCli", "anthropic", "anthropicCompatible", "gemini", "ollama", "custom", "nim-local", "vllm"]);
    if (!validProviders.has(normalized)) {
      console.error(`  Unsupported NEMOCLAW_PROVIDER: ${providerKey}`);
 -    console.error("  Valid values: build, openai, anthropic, anthropicCompatible, gemini, ollama, custom, nim-local, vllm");
-+    console.error("  Valid values: build, openai, openai-codex, anthropic, anthropicCompatible, gemini, ollama, custom, nim-local, vllm");
++    console.error("  Valid values: build, openai, openai-codex, anthropic-cli, anthropic, anthropicCompatible, gemini, ollama, custom, nim-local, vllm");
      process.exit(1);
    }
  
-@@ -1931,6 +2236,7 @@ async function setupNim(gpu) {
+@@ -1931,7 +2418,9 @@ async function setupNim(gpu) {
        (!ollamaRunning && !(EXPERIMENTAL && vllmRunning) ? " (recommended)" : ""),
    });
    options.push({ key: "openai", label: "OpenAI" });
 +  options.push({ key: "openaiCodex", label: "OpenAI Codex (ChatGPT OAuth)" });
    options.push({ key: "custom", label: "Other OpenAI-compatible endpoint" });
++  options.push({ key: "anthropicClaudeCli", label: "Anthropic Claude CLI (subscription OAuth reuse)" });
    options.push({ key: "anthropic", label: "Anthropic" });
    options.push({ key: "anthropicCompatible", label: "Other Anthropic-compatible endpoint" });
-@@ -2018,6 +2324,19 @@ async function setupNim(gpu) {
+   options.push({ key: "gemini", label: "Google Gemini" });
+@@ -2018,6 +2507,31 @@ async function setupNim(gpu) {
          }
        }
  
@@ -543,33 +745,50 @@ index fa5150a980aed3023c05f44ed40987a6f95cd694..036c216f171fb5c8c955113d0cf90352
 +        break;
 +      }
 +
++      if (selected.key === "anthropicClaudeCli") {
++        ensureClaudeCliOAuth();
++        const defaultModel = requestedModel || remoteConfig.defaultModel;
++        if (isNonInteractive()) {
++          model = defaultModel;
++        } else {
++          model = await promptRemoteModel(remoteConfig.label, selected.key, defaultModel, null);
++        }
++        console.log(`  Using ${remoteConfig.label} with model: ${model}`);
++        break;
++      }
++
        if (selected.key === "build") {
          if (isNonInteractive()) {
            if (!process.env.NVIDIA_API_KEY) {
-@@ -2311,7 +2630,9 @@ async function setupInference(sandboxName, model, provider, endpointUrl = null,
+@@ -2311,7 +2825,11 @@ async function setupInference(sandboxName, model, provider, endpointUrl = null,
    step(4, 7, "Setting up inference provider");
    runOpenshell(["gateway", "select", GATEWAY_NAME], { ignoreError: true });
  
 -  if (provider === "nvidia-prod" || provider === "nvidia-nim" || provider === "openai-api" || provider === "anthropic-prod" || provider === "compatible-anthropic-endpoint" || provider === "gemini-api" || provider === "compatible-endpoint") {
 +  if (provider === OPENAI_CODEX_PROVIDER) {
 +    ensureOpenAICodexOAuth();
++  } else if (provider === ANTHROPIC_CLAUDE_CLI_PROVIDER) {
++    ensureClaudeCliOAuth();
 +  } else if (provider === "nvidia-prod" || provider === "nvidia-nim" || provider === "openai-api" || provider === "anthropic-prod" || provider === "compatible-anthropic-endpoint" || provider === "gemini-api" || provider === "compatible-endpoint") {
      const config = provider === "nvidia-nim"
        ? REMOTE_PROVIDER_CONFIG.build
        : Object.values(REMOTE_PROVIDER_CONFIG).find((entry) => entry.providerName === provider);
-@@ -2370,6 +2691,11 @@ async function setupInference(sandboxName, model, provider, endpointUrl = null,
+@@ -2370,6 +2888,14 @@ async function setupInference(sandboxName, model, provider, endpointUrl = null,
  async function setupOpenclaw(sandboxName, model, provider) {
    step(6, 7, "Setting up OpenClaw inside sandbox");
  
 +  if (provider === OPENAI_CODEX_PROVIDER) {
 +    syncOpenAICodexOAuthIntoSandbox(sandboxName);
 +    console.log("  ✓ Synced OpenAI Codex OAuth into sandbox");
++  } else if (provider === ANTHROPIC_CLAUDE_CLI_PROVIDER) {
++    syncAnthropicClaudeCliOAuthIntoSandbox(sandboxName);
++    console.log("  ✓ Synced Claude CLI OAuth into sandbox");
 +  }
 +
    const selectionConfig = getProviderSelectionConfig(provider, model);
    if (selectionConfig) {
      const sandboxConfig = {
-@@ -2377,15 +2703,7 @@ async function setupOpenclaw(sandboxName, model, provider) {
+@@ -2377,15 +2903,7 @@ async function setupOpenclaw(sandboxName, model, provider) {
        onboardedAt: new Date().toISOString(),
      };
      const script = buildSandboxConfigSyncScript(sandboxConfig);
@@ -586,15 +805,16 @@ index fa5150a980aed3023c05f44ed40987a6f95cd694..036c216f171fb5c8c955113d0cf90352
    }
  
    console.log("  ✓ OpenClaw gateway launched inside sandbox");
-@@ -2736,6 +3054,7 @@ function printDashboard(sandboxName, model, provider, nimContainer = null) {
+@@ -2736,6 +3254,8 @@ function printDashboard(sandboxName, model, provider, nimContainer = null) {
    let providerLabel = provider;
    if (provider === "nvidia-prod" || provider === "nvidia-nim") providerLabel = "NVIDIA Endpoints";
    else if (provider === "openai-api") providerLabel = "OpenAI";
 +  else if (provider === OPENAI_CODEX_PROVIDER) providerLabel = "OpenAI Codex (ChatGPT OAuth)";
++  else if (provider === ANTHROPIC_CLAUDE_CLI_PROVIDER) providerLabel = "Anthropic Claude CLI (subscription OAuth reuse)";
    else if (provider === "anthropic-prod") providerLabel = "Anthropic";
    else if (provider === "compatible-anthropic-endpoint") providerLabel = "Other Anthropic-compatible endpoint";
    else if (provider === "gemini-api") providerLabel = "Google Gemini";
-@@ -2999,7 +3318,11 @@ async function onboard(opts = {}) {
+@@ -2999,7 +3519,11 @@ async function onboard(opts = {}) {
        onboardSession.markStepComplete("sandbox", { sandboxName, provider, model, nimContainer });
      }
  
@@ -603,23 +823,24 @@ index fa5150a980aed3023c05f44ed40987a6f95cd694..036c216f171fb5c8c955113d0cf90352
 +      resume &&
 +      sandboxName &&
 +      isOpenclawReady(sandboxName) &&
-+      provider !== OPENAI_CODEX_PROVIDER;
++      !providerRequiresSandboxAuthSync(provider);
      if (resumeOpenclaw) {
        resumeStepMessage("openclaw", sandboxName);
        onboardSession.markStepComplete("openclaw", { sandboxName, provider, model });
-@@ -3057,6 +3380,7 @@ async function onboard(opts = {}) {
+@@ -3057,6 +3581,8 @@ async function onboard(opts = {}) {
  
  module.exports = {
    buildSandboxConfigSyncScript,
++  buildAnthropicClaudeCliAuthExportBundle,
 +  buildOpenAICodexAuthExportBundle,
    copyBuildContextDir,
    classifySandboxCreateFailure,
    createSandbox,
 diff --git a/nemoclaw/src/commands/slash.test.ts b/nemoclaw/src/commands/slash.test.ts
-index 08096529e063cc411bab9232d4bde0b153437362..404e8baeb100c8a736637d76f0a0d321fe71d09a 100644
+index 08096529e063cc411bab9232d4bde0b153437362..152d69131a2acc5fd0e9984c6567d8b9efcace59 100644
 --- a/nemoclaw/src/commands/slash.test.ts
 +++ b/nemoclaw/src/commands/slash.test.ts
-@@ -242,5 +242,24 @@ describe("commands/slash", () => {
+@@ -242,5 +242,43 @@ describe("commands/slash", () => {
        const result = handleSlashCommand(makeCtx("onboard"), makeApi());
        expect(result.text).toContain("NCP Partner: PartnerCo");
      });
@@ -642,39 +863,75 @@ index 08096529e063cc411bab9232d4bde0b153437362..404e8baeb100c8a736637d76f0a0d321
 +      expect(result.text).toContain("Credential: OpenAI Codex OAuth");
 +      expect(result.text).not.toContain("Credential: $");
 +    });
++
++    it("shows OAuth credential status for anthropic-claude-cli-oauth", () => {
++      const config: NemoClawOnboardConfig = {
++        endpointType: "anthropic-claude-cli-oauth",
++        endpointUrl: "https://api.anthropic.com",
++        ncpPartner: null,
++        model: "claude-sonnet-4-6",
++        profile: "default",
++        credentialEnv: null,
++        onboardedAt: "2026-03-01T00:00:00.000Z",
++      };
++      mockedLoadOnboardConfig.mockReturnValue(config);
++      mockedDescribeOnboardEndpoint.mockReturnValue("anthropic-claude-cli-oauth (https://api.anthropic.com)");
++      mockedDescribeOnboardProvider.mockReturnValue("Anthropic Claude CLI (subscription OAuth reuse)");
++      const result = handleSlashCommand(makeCtx("onboard"), makeApi());
++      expect(result.text).toContain("Anthropic Claude CLI (subscription OAuth reuse)");
++      expect(result.text).toContain("Credential: Claude CLI OAuth reuse");
++      expect(result.text).not.toContain("Credential: $");
++    });
    });
  });
 diff --git a/nemoclaw/src/commands/slash.ts b/nemoclaw/src/commands/slash.ts
-index 84fc120e24df8107d062077f5f4d2a68b8cc311c..461d5b4f4f6726804e87bb8abaf837aeaa0fa3d0 100644
+index 84fc120e24df8107d062077f5f4d2a68b8cc311c..fa3d97533d10aaa8e0b4ab85ec0311e59ebf1b67 100644
 --- a/nemoclaw/src/commands/slash.ts
 +++ b/nemoclaw/src/commands/slash.ts
-@@ -94,7 +94,7 @@ function slashOnboard(): PluginCommandResult {
+@@ -86,6 +86,13 @@ function slashStatus(): PluginCommandResult {
+ function slashOnboard(): PluginCommandResult {
+   const config = loadOnboardConfig();
+   if (config) {
++    const credentialLabel = config.credentialEnv
++      ? `$${config.credentialEnv}`
++      : config.endpointType === "openai-codex"
++        ? "OpenAI Codex OAuth"
++        : config.endpointType === "anthropic-claude-cli-oauth"
++          ? "Claude CLI OAuth reuse"
++          : "OAuth";
+     return {
+       text: [
+         "**NemoClaw Onboard Status**",
+@@ -94,7 +101,7 @@ function slashOnboard(): PluginCommandResult {
          `Provider: ${describeOnboardProvider(config)}`,
          config.ncpPartner ? `NCP Partner: ${config.ncpPartner}` : null,
          `Model: ${config.model}`,
 -        `Credential: $${config.credentialEnv}`,
-+        config.credentialEnv ? `Credential: $${config.credentialEnv}` : "Credential: OpenAI Codex OAuth",
++        `Credential: ${credentialLabel}`,
          `Profile: ${config.profile}`,
          `Onboarded: ${config.onboardedAt}`,
          "",
 diff --git a/nemoclaw/src/index.ts b/nemoclaw/src/index.ts
-index 8a8ac9f09cce9e688e5246b9652b996a8b033c74..7a6aa10a8d88e75e00dfe57a278c9a09711ccb9f 100644
+index 8a8ac9f09cce9e688e5246b9652b996a8b033c74..0ee427b8d78fde390052e8fb7ae763e3da8413a1 100644
 --- a/nemoclaw/src/index.ts
 +++ b/nemoclaw/src/index.ts
-@@ -201,6 +201,12 @@ function registeredProviderForConfig(
+@@ -201,6 +201,15 @@ function registeredProviderForConfig(
    };
  }
  
 +function shouldRegisterManagedInferenceProvider(
 +  onboardCfg: ReturnType<typeof loadOnboardConfig>,
 +): boolean {
-+  return onboardCfg?.endpointType !== "openai-codex";
++  return (
++    onboardCfg?.endpointType !== "openai-codex" &&
++    onboardCfg?.endpointType !== "anthropic-claude-cli-oauth"
++  );
 +}
 +
  const DEFAULT_PLUGIN_CONFIG: NemoClawConfig = {
    blueprintVersion: "latest",
    blueprintRegistry: "ghcr.io/nvidia/nemoclaw-blueprint",
-@@ -245,8 +251,10 @@ export default function register(api: OpenClawPluginApi): void {
+@@ -245,8 +254,10 @@ export default function register(api: OpenClawPluginApi): void {
  
    // 2. Register nvidia-nim provider — use onboard config if available
    const onboardCfg = loadOnboardConfig();
@@ -688,30 +945,32 @@ index 8a8ac9f09cce9e688e5246b9652b996a8b033c74..7a6aa10a8d88e75e00dfe57a278c9a09
    const bannerEndpoint = onboardCfg ? describeOnboardEndpoint(onboardCfg) : "build.nvidia.com";
    const bannerProvider = onboardCfg ? describeOnboardProvider(onboardCfg) : "NVIDIA Endpoints";
 diff --git a/nemoclaw/src/onboard/config.test.ts b/nemoclaw/src/onboard/config.test.ts
-index d098f05719cb36abd1a43d71308dcd9cf361cc6b..5cd00b70b7659dc2d9abf95af6de4471249131f7 100644
+index d098f05719cb36abd1a43d71308dcd9cf361cc6b..5e1a4bbc3e1669e498410972feb37672a0902531 100644
 --- a/nemoclaw/src/onboard/config.test.ts
 +++ b/nemoclaw/src/onboard/config.test.ts
-@@ -86,6 +86,7 @@ describe("onboard/config", () => {
+@@ -86,6 +86,8 @@ describe("onboard/config", () => {
      const endpointCases: [EndpointType, string][] = [
        ["build", "NVIDIA Endpoints"],
        ["openai", "OpenAI"],
 +      ["openai-codex", "OpenAI Codex (ChatGPT OAuth)"],
++      ["anthropic-claude-cli-oauth", "Anthropic Claude CLI (subscription OAuth reuse)"],
        ["anthropic", "Anthropic"],
        ["gemini", "Google Gemini"],
        ["ollama", "Local Ollama"],
 diff --git a/nemoclaw/src/onboard/config.ts b/nemoclaw/src/onboard/config.ts
-index 8887144336fde034450cff44d9827f6f9717bd8b..8232e21678726e2386e4096848a03c31e43895f0 100644
+index 8887144336fde034450cff44d9827f6f9717bd8b..bbd118a7d6a887ddd56752e4918086e0699254e7 100644
 --- a/nemoclaw/src/onboard/config.ts
 +++ b/nemoclaw/src/onboard/config.ts
-@@ -10,6 +10,7 @@ let configDir = join(process.env.HOME ?? tmpdir(), ".nemoclaw");
+@@ -10,6 +10,8 @@ let configDir = join(process.env.HOME ?? tmpdir(), ".nemoclaw");
  export type EndpointType =
    | "build"
    | "openai"
 +  | "openai-codex"
++  | "anthropic-claude-cli-oauth"
    | "anthropic"
    | "gemini"
    | "ncp"
-@@ -24,7 +25,7 @@ export interface NemoClawOnboardConfig {
+@@ -24,7 +26,7 @@ export interface NemoClawOnboardConfig {
    ncpPartner: string | null;
    model: string;
    profile: string;
@@ -720,20 +979,22 @@ index 8887144336fde034450cff44d9827f6f9717bd8b..8232e21678726e2386e4096848a03c31
    provider?: string;
    providerLabel?: string;
    onboardedAt: string;
-@@ -48,6 +49,8 @@ export function describeOnboardProvider(config: NemoClawOnboardConfig): string {
+@@ -48,6 +50,10 @@ export function describeOnboardProvider(config: NemoClawOnboardConfig): string {
        return "NVIDIA Endpoints";
      case "openai":
        return "OpenAI";
 +    case "openai-codex":
 +      return "OpenAI Codex (ChatGPT OAuth)";
++    case "anthropic-claude-cli-oauth":
++      return "Anthropic Claude CLI (subscription OAuth reuse)";
      case "anthropic":
        return "Anthropic";
      case "gemini":
 diff --git a/nemoclaw/src/register.test.ts b/nemoclaw/src/register.test.ts
-index 708ad8e714431e383b792bdf74a6f4a022c64734..d838965e417104ee828bc3d9f6a95f465b79f8a0 100644
+index 708ad8e714431e383b792bdf74a6f4a022c64734..518efd5a0bf4097659e64c5b4123dba28b418170 100644
 --- a/nemoclaw/src/register.test.ts
 +++ b/nemoclaw/src/register.test.ts
-@@ -77,6 +77,23 @@ describe("plugin registration", () => {
+@@ -77,6 +77,40 @@ describe("plugin registration", () => {
        expect.objectContaining({ id: "inference/nvidia/custom-model" }),
      ]);
    });
@@ -748,6 +1009,23 @@ index 708ad8e714431e383b792bdf74a6f4a022c64734..d838965e417104ee828bc3d9f6a95f46
 +      credentialEnv: null,
 +      provider: "openai-codex",
 +      providerLabel: "OpenAI Codex (ChatGPT OAuth)",
++      onboardedAt: "2026-03-01T00:00:00.000Z",
++    });
++    const api = createMockApi();
++    register(api);
++    expect(api.registerProvider).not.toHaveBeenCalled();
++  });
++
++  it("skips managed inference provider registration for Anthropic Claude CLI OAuth reuse", () => {
++    mockedLoadOnboardConfig.mockReturnValue({
++      endpointType: "anthropic-claude-cli-oauth",
++      endpointUrl: "https://api.anthropic.com",
++      ncpPartner: null,
++      model: "claude-sonnet-4-6",
++      profile: "default",
++      credentialEnv: null,
++      provider: "anthropic-claude-cli-oauth",
++      providerLabel: "Anthropic Claude CLI (subscription OAuth reuse)",
 +      onboardedAt: "2026-03-01T00:00:00.000Z",
 +    });
 +    const api = createMockApi();
@@ -771,18 +1049,21 @@ index cb4c8d698514af93cdff7e4088d31ecb101b8429..6400b730fc68de6d23685c4bd2a58a72
    if [ "$OUT" != "/sandbox/.openclaw-data/$link" ]; then
      FAILED_LINKS="$FAILED_LINKS $link->$OUT"
 diff --git a/test/inference-config.test.js b/test/inference-config.test.js
-index ad13b30888f3709b74ad11a1650e2ec950d5512b..01ed3e11289547475193c82981965580cfbbc8fd 100644
+index ad13b30888f3709b74ad11a1650e2ec950d5512b..d07802755038af71fdc572ceddd12c0ffe1c5a8b 100644
 --- a/test/inference-config.test.js
 +++ b/test/inference-config.test.js
-@@ -11,6 +11,7 @@ import {
+@@ -9,8 +9,10 @@ import {
+   DEFAULT_OLLAMA_MODEL,
+   DEFAULT_ROUTE_CREDENTIAL_ENV,
    DEFAULT_ROUTE_PROFILE,
++  ANTHROPIC_CLAUDE_CLI_BASE_URL,
    INFERENCE_ROUTE_URL,
    MANAGED_PROVIDER_ID,
 +  OPENAI_CODEX_BASE_URL,
    getOpenClawPrimaryModel,
    getProviderSelectionConfig,
    parseGatewayInference,
-@@ -70,6 +71,17 @@ describe("inference selection config", () => {
+@@ -70,6 +72,28 @@ describe("inference selection config", () => {
    });
  
    it("maps the remaining hosted providers to the sandbox inference route", () => {
@@ -797,10 +1078,21 @@ index ad13b30888f3709b74ad11a1650e2ec950d5512b..01ed3e11289547475193c82981965580
 +      providerLabel: "OpenAI Codex (ChatGPT OAuth)",
 +    });
 +
++    expect(getProviderSelectionConfig("anthropic-claude-cli-oauth", "claude-sonnet-4-6")).toEqual({
++      endpointType: "anthropic-claude-cli-oauth",
++      endpointUrl: ANTHROPIC_CLAUDE_CLI_BASE_URL,
++      ncpPartner: null,
++      model: "claude-sonnet-4-6",
++      profile: "default",
++      credentialEnv: null,
++      provider: "anthropic-claude-cli-oauth",
++      providerLabel: "Anthropic Claude CLI (subscription OAuth reuse)",
++    });
++
      expect(getProviderSelectionConfig("openai-api", "gpt-5.4-mini")).toEqual({
        endpointType: "custom",
        endpointUrl: INFERENCE_ROUTE_URL,
-@@ -134,6 +146,10 @@ describe("inference selection config", () => {
+@@ -134,6 +158,14 @@ describe("inference selection config", () => {
      expect(getOpenClawPrimaryModel("ollama-local", "nemotron-3-nano:30b")).toBe(`${MANAGED_PROVIDER_ID}/nemotron-3-nano:30b`);
    });
  
@@ -808,22 +1100,27 @@ index ad13b30888f3709b74ad11a1650e2ec950d5512b..01ed3e11289547475193c82981965580
 +    expect(getOpenClawPrimaryModel("openai-codex", "gpt-5.4")).toBe("openai-codex/gpt-5.4");
 +  });
 +
++  it("builds a qualified OpenClaw primary model for anthropic-claude-cli-oauth", () => {
++    expect(getOpenClawPrimaryModel("anthropic-claude-cli-oauth", "claude-sonnet-4-6")).toBe("anthropic/claude-sonnet-4-6");
++  });
++
    it("falls back to provider defaults when model is omitted", () => {
      expect(getProviderSelectionConfig("openai-api").model).toBe("gpt-5.4");
      expect(getProviderSelectionConfig("anthropic-prod").model).toBe("claude-sonnet-4-6");
 diff --git a/test/onboard.test.js b/test/onboard.test.js
-index 16b7e5453d867655ef674e326945917aad24d487..dc82f87a5f34158cf76a0913d6696610f918f067 100644
+index 16b7e5453d867655ef674e326945917aad24d487..f4454ae993eb1baad9f552283cdf6597567021bb 100644
 --- a/test/onboard.test.js
 +++ b/test/onboard.test.js
-@@ -9,6 +9,7 @@ import path from "node:path";
+@@ -9,6 +9,8 @@ import path from "node:path";
  import { describe, expect, it } from "vitest";
  
  import {
++  buildAnthropicClaudeCliAuthExportBundle,
 +  buildOpenAICodexAuthExportBundle,
    buildSandboxConfigSyncScript,
    classifySandboxCreateFailure,
    getGatewayReuseState,
-@@ -124,6 +125,16 @@ describe("onboard helpers", () => {
+@@ -124,6 +126,26 @@ describe("onboard helpers", () => {
      );
    });
  
@@ -837,10 +1134,20 @@ index 16b7e5453d867655ef674e326945917aad24d487..dc82f87a5f34158cf76a0913d6696610
 +    });
 +  });
 +
++  it("maps Anthropic Claude CLI OAuth reuse to the direct Anthropic sandbox config", () => {
++    assert.deepEqual(getSandboxInferenceConfig("claude-sonnet-4-6", "anthropic-claude-cli-oauth"), {
++      providerKey: "anthropic",
++      primaryModelRef: "anthropic/claude-sonnet-4-6",
++      inferenceBaseUrl: "https://api.anthropic.com",
++      inferenceApi: "anthropic-messages",
++      inferenceCompat: null,
++    });
++  });
++
    it("patches the staged Dockerfile for Anthropic with anthropic-messages routing", () => {
      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-dockerfile-anthropic-"));
      const dockerfilePath = path.join(tmpDir, "Dockerfile");
-@@ -160,6 +171,114 @@ describe("onboard helpers", () => {
+@@ -160,6 +182,208 @@ describe("onboard helpers", () => {
      }
    });
  
@@ -876,6 +1183,43 @@ index 16b7e5453d867655ef674e326945917aad24d487..dc82f87a5f34158cf76a0913d6696610
 +      assert.match(patched, /^ARG NEMOCLAW_INFERENCE_BASE_URL=https:\/\/chatgpt\.com\/backend-api$/m);
 +      assert.match(patched, /^ARG NEMOCLAW_INFERENCE_API=openai-codex-responses$/m);
 +      assert.match(patched, /^ARG NEMOCLAW_BUILD_ID=build-codex$/m);
++    } finally {
++      fs.rmSync(tmpDir, { recursive: true, force: true });
++    }
++  });
++
++  it("patches the staged Dockerfile for Anthropic Claude CLI OAuth reuse", () => {
++    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-dockerfile-anthropic-cli-"));
++    const dockerfilePath = path.join(tmpDir, "Dockerfile");
++    fs.writeFileSync(
++      dockerfilePath,
++      [
++        "ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b",
++        "ARG NEMOCLAW_PROVIDER_KEY=nvidia",
++        "ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-3-super-120b-a12b",
++        "ARG CHAT_UI_URL=http://127.0.0.1:18789",
++        "ARG NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1",
++        "ARG NEMOCLAW_INFERENCE_API=openai-completions",
++        "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
++        "ARG NEMOCLAW_BUILD_ID=default",
++      ].join("\n")
++    );
++
++    try {
++      patchStagedDockerfile(
++        dockerfilePath,
++        "claude-sonnet-4-6",
++        "http://127.0.0.1:18789",
++        "build-anthropic-cli",
++        "anthropic-claude-cli-oauth"
++      );
++      const patched = fs.readFileSync(dockerfilePath, "utf8");
++      assert.match(patched, /^ARG NEMOCLAW_MODEL=claude-sonnet-4-6$/m);
++      assert.match(patched, /^ARG NEMOCLAW_PROVIDER_KEY=anthropic$/m);
++      assert.match(patched, /^ARG NEMOCLAW_PRIMARY_MODEL_REF=anthropic\/claude-sonnet-4-6$/m);
++      assert.match(patched, /^ARG NEMOCLAW_INFERENCE_BASE_URL=https:\/\/api\.anthropic\.com$/m);
++      assert.match(patched, /^ARG NEMOCLAW_INFERENCE_API=anthropic-messages$/m);
++      assert.match(patched, /^ARG NEMOCLAW_BUILD_ID=build-anthropic-cli$/m);
 +    } finally {
 +      fs.rmSync(tmpDir, { recursive: true, force: true });
 +    }
@@ -937,6 +1281,63 @@ index 16b7e5453d867655ef674e326945917aad24d487..dc82f87a5f34158cf76a0913d6696610
 +          expires: 1234567890,
 +          accountId: "acct_123",
 +          email: "user@example.com",
++        },
++      });
++
++      expect(bundle.oauthJsonPath).toBeNull();
++    } finally {
++      if (originalHome === undefined) {
++        delete process.env.HOME;
++      } else {
++        process.env.HOME = originalHome;
++      }
++      fs.rmSync(tempHome, { recursive: true, force: true });
++      fs.rmSync(bundleDir, { recursive: true, force: true });
++    }
++  });
++
++  it("exports Claude CLI credentials into sandbox auth files", () => {
++    const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-claude-home-"));
++    const bundleDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-claude-bundle-"));
++    const originalHome = process.env.HOME;
++    const claudeCredsPath = path.join(tempHome, ".claude", ".credentials.json");
++    fs.mkdirSync(path.dirname(claudeCredsPath), { recursive: true });
++    fs.writeFileSync(
++      claudeCredsPath,
++      JSON.stringify(
++        {
++          claudeAiOauth: {
++            accessToken: "claude-access-token",
++            refreshToken: "claude-refresh-token",
++            expiresAt: 2234567890,
++          },
++        },
++        null,
++        2
++      )
++    );
++
++    process.env.HOME = tempHome;
++    try {
++      const bundle = buildAnthropicClaudeCliAuthExportBundle(bundleDir);
++      assert.ok(bundle);
++      const exportedProfiles = JSON.parse(fs.readFileSync(bundle.authProfilesPath, "utf8"));
++      assert.deepEqual(Object.keys(exportedProfiles.profiles), ["anthropic:claude-cli"]);
++      assert.deepEqual(exportedProfiles.profiles["anthropic:claude-cli"], {
++        type: "oauth",
++        provider: "anthropic",
++        access: "claude-access-token",
++        refresh: "claude-refresh-token",
++        expires: 2234567890,
++      });
++
++      const exportedAuth = JSON.parse(fs.readFileSync(bundle.authJsonPath, "utf8"));
++      assert.deepEqual(exportedAuth, {
++        anthropic: {
++          type: "oauth",
++          access: "claude-access-token",
++          refresh: "claude-refresh-token",
++          expires: 2234567890,
 +        },
 +      });
 +

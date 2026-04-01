@@ -1,7 +1,7 @@
 {
   "name": "@phflot/nemoclaw-oauth",
   "version": "0.1.0",
-  "description": "Patch-distribution CLI for filling the stock NemoClaw OpenAI Codex OAuth integration gap",
+  "description": "Patch-distribution CLI for filling the stock NemoClaw OpenAI Codex and Anthropic Claude CLI OAuth integration gaps",
   "author": {
     "name": "Butterlattice Lab",
     "url": "https://github.com/butterlatticelab"

@@ -1,6 +1,6 @@
 {
-  "patchId": "nemoclaw-openai-codex-oauth",
-  "description": "Portable NemoClaw patch that fills the stock NemoClaw Codex OAuth integration gap while preserving the existing upstream OpenAI and Anthropic API-key paths.",
+  "patchId": "nemoclaw-openai-codex-and-anthropic-claude-cli-oauth",
+  "description": "Portable NemoClaw patch that fills the stock NemoClaw OpenAI Codex and Anthropic Claude CLI OAuth integration gaps while preserving the existing upstream OpenAI and Anthropic API-key paths.",
   "npmPackage": {
     "name": "@phflot/nemoclaw-oauth",
     "publishIntent": "planned"
@@ -28,7 +28,8 @@
   "supportedAuth": {
     "openaiApiKey": "upstream",
     "openaiCodexOAuth": "patched",
-    "anthropicApiKey": "upstream"
+    "anthropicApiKey": "upstream",
+    "anthropicClaudeCliOAuthReuse": "patched"
   },
   "excludedLocalHunks": [
     "custom ~/nemoclaw/config/openclaw-sandbox.yaml selection",
